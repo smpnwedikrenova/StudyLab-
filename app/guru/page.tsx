@@ -324,7 +324,7 @@ export default function GuruDashboard() {
             </div>
             <div>
               <h1 className="text-xl md:text-2xl font-black text-brand-navy tracking-tight">Dashboard Guru</h1>
-              <p className="text-brand-navy/60 text-[10px] md:text-sm font-black uppercase tracking-widest">AksaraPlay • {userData.subject}</p>
+              <p className="text-brand-navy/60 text-[10px] md:text-sm font-black uppercase tracking-widest">StudyLab • {userData.subject}</p>
             </div>
           </div>
           <button onClick={logout} className="flex items-center gap-2 text-brand-navy/40 hover:text-brand-orange transition-colors font-black text-[10px] md:text-xs uppercase tracking-widest">

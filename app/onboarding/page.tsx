@@ -26,7 +26,7 @@ export default function Onboarding() {
     <div className="flex flex-col items-center min-h-screen bg-brand-cream">
       <div className="w-full max-w-md md:max-w-2xl px-4 py-8 md:py-12">
         <div className="bg-white rounded-[32px] md:rounded-[48px] shadow-2xl p-6 md:p-12 border border-brand-navy/5">
-          <h1 className="text-2xl md:text-4xl font-black text-center mb-2 text-brand-navy tracking-tight">Selamat Datang di AksaraPlay!</h1>
+          <h1 className="text-2xl md:text-4xl font-black text-center mb-2 text-brand-navy tracking-tight">Selamat Datang di StudyLab!</h1>
           <p className="text-center text-brand-navy/60 mb-8 md:mb-12 font-medium">Pilih peran Anda untuk melanjutkan. Pilihan ini bersifat permanen.</p>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8 mb-8 md:mb-12">

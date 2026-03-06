@@ -300,7 +300,7 @@ export default function AdminDashboard() {
         
         <footer className="mt-10 text-center">
           <p className="text-[10px] font-black text-brand-navy/20 uppercase tracking-[0.3em]">
-            AksaraPlay Internal Management System • Confidential
+            StudyLab Internal Management System • Confidential
           </p>
         </footer>
       </div>

@@ -57,17 +57,17 @@ export default function Home() {
 
       {/* Container for the "Phone" view on desktop, full screen on mobile */}
       <div className="w-full max-w-[500px] h-full min-h-screen flex flex-col items-center justify-between relative z-10">
-        {/* Top Section: Logo (Updated to AksaraPlay) */}
+        {/* Top Section: Logo (Updated to StudyLab) */}
         <div className="pt-12 md:pt-16 z-10 flex flex-col items-center">
           <h1 className="text-6xl md:text-7xl font-black tracking-tight text-white leading-none drop-shadow-2xl">
-            AKSARA
+            STUDY
           </h1>
           <div className="flex items-center gap-2 mt-[-10px]">
             <div className="relative">
               <Pencil className="w-12 h-12 md:w-16 md:h-16 text-brand-orange fill-brand-orange/20 drop-shadow-lg" />
               <div className="absolute bottom-3 left-1/2 -translate-x-1/2 w-6 h-4 bg-brand-orange rounded-sm opacity-60 blur-[2px]" />
             </div>
-            <span className="text-6xl md:text-7xl font-black tracking-tight text-brand-orange drop-shadow-2xl">PLAY</span>
+            <span className="text-6xl md:text-7xl font-black tracking-tight text-brand-orange drop-shadow-2xl">Lab</span>
           </div>
         </div>
 
