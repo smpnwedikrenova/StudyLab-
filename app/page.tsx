@@ -2,11 +2,30 @@
 
 // MENGGUNAKAN CONTEXT LAMA ANDA
 import { useAuth } from "@/contexts/AuthContext"; 
-import { Pencil } from "lucide-react";
 import { motion } from "motion/react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
+
+// Komponen SVG Kustom untuk Ikon Tabung Reaksi (Sesuai Gambar Anda)
+const CustomFlaskIcon = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 100 100" fill="currentColor" className={className}>
+    {/* Gelembung di atas (luar tabung) */}
+    <circle cx="42" cy="15" r="4" />
+    <circle cx="50" cy="26" r="5" />
+    
+    {/* Garis luar tabung Erlenmeyer */}
+    <path d="M60 32H40C37.8 32 36 33.8 36 36C36 38.2 37.8 40 40 40H41V52L22.6 77.8C20.6 80.6 22.6 85 26.1 85H73.9C77.4 85 79.4 80.6 77.4 77.8L59 52V40H60C62.2 40 64 38.2 64 36C64 33.8 62.2 32 60 32ZM71.2 79H28.8L47 53.5V40H53V53.5L71.2 79Z" />
+    
+    {/* Cairan di dalam tabung */}
+    <path d="M34.5 71 Q 42 60, 50 68 T 65.5 71 L 71.2 79 H 28.8 Z" />
+    
+    {/* Gelembung di dalam cairan */}
+    <circle cx="48" cy="65" r="4" />
+    <circle cx="55" cy="56" r="3" />
+    <circle cx="45" cy="48" r="2" />
+  </svg>
+);
 
 export default function Home() {
   // Menggunakan signInWithGoogle dan userData dari AuthContext lama Anda
@@ -64,13 +83,14 @@ export default function Home() {
           </h1>
           <div className="flex items-center gap-2 mt-[-10px]">
             <div className="relative">
-              <Pencil className="w-12 h-12 md:w-16 md:h-16 text-brand-orange fill-brand-orange/20 drop-shadow-lg" />
+              {/* Menggunakan Custom SVG Icon di sini */}
+              <CustomFlaskIcon className="w-18 h-18 md:w-22 md:h-22 text-brand-orange drop-shadow-lg" />
               <div className="absolute bottom-3 left-1/2 -translate-x-1/2 w-6 h-4 bg-brand-orange rounded-sm opacity-60 blur-[2px]" />
             </div>
             <span className="text-6xl md:text-7xl font-black tracking-tight text-brand-orange drop-shadow-2xl">Lab</span>
           </div>
         </div>
-
+ 
         {/* Middle Section: Empty (Background image provides the illustration) */}
         <div className="flex-1" />
 
