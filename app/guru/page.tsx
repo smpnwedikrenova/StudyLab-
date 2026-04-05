@@ -44,6 +44,7 @@ export default function GuruDashboard() {
 
   useEffect(() => {
     if (!viewingRoom) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setRoomLeaderboard([]);
       return;
     }
