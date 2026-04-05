@@ -6,7 +6,6 @@ import { doc, getDoc, setDoc, updateDoc, increment } from "firebase/firestore";
 import { auth, db, googleProvider } from "@/lib/firebase";
 import { useRouter, usePathname } from "next/navigation";
 
-// 1. TAMBAHKAN "Admin" KE DALAM ROLE
 export type Role = "Guru" | "Siswa" | "Admin" | null;
 
 interface UserData {
@@ -19,6 +18,7 @@ interface UserData {
   quizzesPlayed?: number;
   avatar?: string;
   studentClass?: string;
+  studentAbsen?: string;
   profileCompleted?: boolean;
   diamonds?: number;
   inventory?: Record<string, number>;
@@ -54,56 +54,26 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         if (userDoc.exists()) {
           const data = userDoc.data() as UserData;
           setUserData(data);
-          
-          // 2. LOGIKA ROUTING YANG DIPERBAIKI
           if (!data.role && pathname !== "/onboarding") {
             router.push("/onboarding");
-          } else if (data.role) {
-            const isSiswaRoute = pathname.startsWith("/siswa") || pathname.startsWith("/room/siswa");
-            const isGuruRoute = pathname.startsWith("/guru") || pathname.startsWith("/room/guru");
-            const isAdminRoute = pathname.startsWith("/admin-rahasia");
-
-            // Jika Admin, biarkan dia di halaman admin, atau arahkan ke sana jika dari home
-            if (data.role === "Admin") {
-              if (pathname === "/" || pathname === "/onboarding") {
-                router.push("/admin-rahasia");
-              }
-            } 
-            // Jika Guru mencoba masuk ke halaman siswa, kembalikan ke guru
-            else if (data.role === "Guru" && (isSiswaRoute || isAdminRoute)) {
-              router.push("/guru");
-            } 
-            // Jika Siswa mencoba masuk ke halaman guru/admin, kembalikan ke siswa
-            else if (data.role === "Siswa" && (isGuruRoute || isAdminRoute)) {
-              router.push("/siswa");
-            } 
-            // Jika di halaman awal, arahkan sesuai role
-            else if (pathname === "/" || pathname === "/onboarding") {
-              router.push(data.role === "Guru" ? "/guru" : "/siswa");
-            }
+          } else if (data.role && (pathname === "/" || pathname === "/onboarding")) {
+            router.push(data.role === "Guru" ? "/guru" : "/siswa");
           }
         } else {
-          // 3. CEK EMAIL ADMIN SAAT PERTAMA KALI LOGIN
-          const isDefaultAdmin = currentUser.email === 'smpnwedikrenova@gmail.com' || currentUser.email === 'irfandwi.hs@gmail.com';
-          
+          // New user, create empty doc
           const newUserData: UserData = {
             uid: currentUser.uid,
             email: currentUser.email,
             displayName: currentUser.displayName,
-            role: isDefaultAdmin ? "Admin" : null, // Langsung jadi Admin jika email cocok
+            role: null,
             xp: 0,
             diamonds: 0,
             quizzesPlayed: 0,
             inventory: {}
           };
-          
           await setDoc(userDocRef, newUserData);
           setUserData(newUserData);
-          
-          // Jika Admin, langsung ke admin. Jika bukan, ke onboarding
-          if (isDefaultAdmin) {
-            router.push("/admin-rahasia");
-          } else if (pathname !== "/onboarding") {
+          if (pathname !== "/onboarding") {
             router.push("/onboarding");
           }
         }
@@ -145,10 +115,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
     await setDoc(userDocRef, updatedData, { merge: true });
     setUserData((prev) => prev ? { ...prev, ...updatedData } : null);
-    
-    // Arahkan sesuai role yang baru dipilih
-    if (role === "Admin") router.push("/admin-rahasia");
-    else router.push(role === "Guru" ? "/guru" : "/siswa");
+    router.push(role === "Guru" ? "/guru" : "/siswa");
   };
 
   const updateProfile = async (data: Partial<UserData>) => {

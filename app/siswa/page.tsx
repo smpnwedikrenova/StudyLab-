@@ -1,351 +1,651 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useAuth } from "@/contexts/AuthContext";
-import { useRouter } from "next/navigation";
-import { LogOut, Play, Trophy, Star, Zap, History, Users, Diamond, ShoppingBag } from "lucide-react";
-import { collection, query, orderBy, getDocs, doc, updateDoc, limit, getCountFromServer, where } from "firebase/firestore";
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, increment, addDoc, getCountFromServer } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import StudentOnboardingModal from "@/components/StudentOnboardingModal";
-import Avatar from "@/components/Avatar";
-import { motion } from "motion/react";
-import Shop from "@/components/Shop";
+import { useAuth } from "@/contexts/AuthContext";
+import { motion, AnimatePresence } from "motion/react";
+import { Gamepad2, Square, Trophy, Zap, Flame, Diamond, Sparkles, Ghost } from "lucide-react";
+import confetti from "canvas-confetti";
 
-export default function SiswaDashboard() {
-  const { userData, logout } = useAuth();
+// Utility to shuffle array
+function shuffleArray(array: any[]) {
+  const newArr = [...array];
+  for (let i = newArr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [newArr[i], newArr[j]] = [newArr[j], newArr[i]];
+  }
+  return newArr;
+}
+
+export default function SiswaRoom() {
+  const { roomCode } = useParams();
+  const { userData } = useAuth();
   const router = useRouter();
-  const [roomCode, setRoomCode] = useState("");
-  const [rank, setRank] = useState<number | string>("-");
-  const [quizHistory, setQuizHistory] = useState<any[]>([]);
-  const [globalLeaderboard, setGlobalLeaderboard] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<"join" | "history" | "leaderboard" | "shop">("join");
+  
+  const [room, setRoom] = useState<any>(null);
+  const [quiz, setQuiz] = useState<any>(null);
+  const [questions, setQuestions] = useState<any[]>([]);
+  const [currentQuestionIdx, setCurrentQuestionIdx] = useState(0);
+  const [answers, setAnswers] = useState<Record<string, number>>({});
+  const [submitted, setSubmitted] = useState(false);
+  const [score, setScore] = useState(0);
+  const [roomRank, setRoomRank] = useState<number | null>(null);
+  const [streak, setStreak] = useState(0);
+  const [feedback, setFeedback] = useState<"correct" | "incorrect" | null>(null);
+  const [isAnswering, setIsAnswering] = useState(false);
+  const [showReview, setShowReview] = useState(false);
+  const [correctCount, setCorrectCount] = useState(0);
+  const [incorrectCount, setIncorrectCount] = useState(0);
+  
+  // Item States
+  const [inventory, setInventory] = useState<Record<string, number>>({});
+  const [isGoldenAppleActive, setIsGoldenAppleActive] = useState(false);
+  const [phoenixFeatherUsed, setPhoenixFeatherUsed] = useState(0);
+  const [removedOptions, setRemovedOptions] = useState<number[]>([]);
+  const [usedItemsInSession, setUsedItemsInSession] = useState<string[]>([]);
+
+  const playSound = (type: "correct" | "incorrect" | "item") => {
+    const audio = new Audio(
+      type === "correct" 
+        ? "https://assets.mixkit.co/active_storage/sfx/2000/2000-preview.mp3" 
+        : type === "incorrect"
+        ? "https://assets.mixkit.co/active_storage/sfx/2959/2959-preview.mp3"
+        : "https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3"
+    );
+    audio.volume = 0.3;
+    audio.play().catch(() => {}); // Ignore if blocked by browser
+  };
 
   useEffect(() => {
-    const fetchData = async () => {
-      if (!userData?.uid) return;
-      try {
-        // 1. Fetch Global Leaderboard (Top 10 Siswa who have earned XP)
-        const qLeaderboard = query(
-          collection(db, "users"), 
-          where("role", "==", "Siswa"),
-          where("xp", ">", 0),
-          orderBy("xp", "desc"), 
-          limit(10)
-        );
-        const snapshotLeaderboard = await getDocs(qLeaderboard);
-        const users = snapshotLeaderboard.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setGlobalLeaderboard(users);
+    if (!roomCode) return;
 
-        // 2. Calculate Actual Global Rank (Siswa only)
-        if (userData.xp === undefined || userData.xp === null) {
-          setRank("-");
-        } else {
-          const qRank = query(
-            collection(db, "users"), 
-            where("role", "==", "Siswa"),
-            where("xp", ">", userData.xp)
-          );
-          const rankSnapshot = await getCountFromServer(qRank);
-          const actualRank = rankSnapshot.data().count + 1;
-          setRank(`#${actualRank}`);
+    const q = query(collection(db, "rooms"), where("roomCode", "==", roomCode));
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      if (!snapshot.empty) {
+        const roomData: any = { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
+        setRoom(roomData);
+        
+        // Check if student has already submitted for this room
+        if (userData?.uid && roomData.id) {
+          const lbDoc = await getDoc(doc(db, "rooms", roomData.id, "leaderboard", userData.uid));
+          if (lbDoc.exists()) {
+            const lbData = lbDoc.data();
+            if (lbData.status === "finished") {
+              setScore(lbData.score || 0);
+              setSubmitted(true);
+            }
+          }
         }
 
-        // 3. Fetch Quiz History
-        const qHistory = query(collection(db, "users", userData.uid, "history"), orderBy("completedAt", "desc"), limit(10));
-        const snapshotHistory = await getDocs(qHistory);
-        const historyData = snapshotHistory.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setQuizHistory(historyData);
-      } catch (error) {
-        console.error("Error fetching data:", error);
+        if (roomData.quizId && !quiz) {
+          const quizDoc = await getDoc(doc(db, "quizzes", roomData.quizId));
+          if (quizDoc.exists()) {
+            const quizData = quizDoc.data();
+            setQuiz(quizData);
+            
+            // Set inventory from userData
+            if (userData?.inventory) {
+              setInventory(userData.inventory);
+            }
+
+            // Randomize questions for this specific student
+            const shuffled = shuffleArray(quizData.questions.map((q: any, idx: number) => ({ ...q, originalIndex: idx })));
+            setQuestions(shuffled);
+
+            // Initialize leaderboard entry for progress tracking
+            if (userData?.uid && roomData.id) {
+              await setDoc(doc(db, "rooms", roomData.id, "leaderboard", userData.uid), {
+                siswaId: userData.uid,
+                siswaName: userData.displayName || "Anonymous",
+                avatar: userData.avatar || "0",
+                studentClass: userData.studentClass || "-",
+                score: 0,
+                progress: 0,
+                totalQuestions: shuffled.length,
+                status: "playing",
+                lastUpdate: new Date()
+              }, { merge: true });
+            }
+          }
+        }
       }
-    };
+    });
 
-    fetchData();
-  }, [userData?.uid, userData?.xp, userData?.quizzesPlayed]);
+    return () => unsubscribe();
+  }, [roomCode, quiz, userData?.uid, userData?.displayName, userData?.avatar, userData?.studentClass, userData?.inventory]);
 
-  const xp = userData?.xp || 0;
-  const quizzesPlayed = userData?.quizzesPlayed || 0;
-  const level = Math.floor(xp / 100) + 1;
-  const xpToNextLevel = 100 - (xp % 100);
-  const progress = (xp % 100);
+  const handleAnswer = async (optionIndex: number) => {
+    if (isAnswering || feedback) return;
+    
+    setIsAnswering(true);
+    const currentQ = questions[currentQuestionIdx];
+    const isCorrect = optionIndex === currentQ.correctAnswerIndex;
+    let isActuallyCorrect = isCorrect;
+    
+    setAnswers(prev => ({
+      ...prev,
+      [currentQuestionIdx]: optionIndex
+    }));
 
-  const joinRoom = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (roomCode.length === 6) {
-      router.push(`/room/siswa/${roomCode}`);
+    if (isCorrect) {
+      setFeedback("correct");
+      setStreak(prev => prev + 1);
+      setCorrectCount(prev => prev + 1);
+      playSound("correct");
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ["#F27D26", "#141414", "#FFFFFF"]
+      });
+    } else {
+      // Check for Phoenix Feather
+      if (phoenixFeatherUsed < 5 && inventory["phoenix_feather"] > 0) {
+        setFeedback("correct"); // Treat as correct
+        setStreak(prev => prev + 1);
+        setPhoenixFeatherUsed(prev => prev + 1);
+        setCorrectCount(prev => prev + 1);
+        isActuallyCorrect = true;
+        setInventory(prev => ({ ...prev, phoenix_feather: prev.phoenix_feather - 1 }));
+        setUsedItemsInSession(prev => [...prev, "phoenix_feather"]);
+        
+        // Update answers state to correct index so submitQuiz calculates correctly
+        setAnswers(prev => ({
+          ...prev,
+          [currentQuestionIdx]: currentQ.correctAnswerIndex
+        }));
+
+        playSound("item");
+        confetti({
+          particleCount: 50,
+          spread: 40,
+          origin: { y: 0.6 },
+          colors: ["#6366f1", "#FFFFFF"]
+        });
+      } else {
+        setFeedback("incorrect");
+        setStreak(0);
+        setIncorrectCount(prev => prev + 1);
+        playSound("incorrect");
+      }
+    }
+
+    // Wait for feedback animation
+    setTimeout(async () => {
+      setFeedback(null);
+      setIsAnswering(false);
+      setRemovedOptions([]); // Reset removed options for next question
+
+      // Update progress in leaderboard
+      if (userData?.uid && room?.id) {
+        const answeredCount = Object.keys({ ...answers, [currentQuestionIdx]: optionIndex }).length;
+        
+        let currentScore = (correctCount + (isActuallyCorrect ? 1 : 0)) * 10;
+        if (isGoldenAppleActive) currentScore *= 2;
+
+        await setDoc(doc(db, "rooms", room.id, "leaderboard", userData.uid), {
+          progress: answeredCount,
+          correctCount: correctCount + (isActuallyCorrect ? 1 : 0),
+          incorrectCount: incorrectCount + (!isActuallyCorrect ? 1 : 0),
+          score: currentScore,
+          lastUpdate: new Date()
+        }, { merge: true });
+      }
+
+      if (currentQuestionIdx < questions.length - 1) {
+        setCurrentQuestionIdx(prev => prev + 1);
+      }
+    }, 1500);
+  };
+
+  const submitQuiz = async () => {
+    if (!room?.id || !userData?.uid) return;
+    
+    // Calculate score
+    let correctCount = 0;
+    questions.forEach((q, idx) => {
+      if (answers[idx] === q.correctAnswerIndex) {
+        correctCount++;
+      }
+    });
+
+    // Add phoenix feather saves to correct count for score calculation
+    // Actually, phoenix feather already updated the answers state if we used it?
+    // Wait, handleAnswer updates answers[currentQuestionIdx] = optionIndex.
+    // If phoenix feather is used, optionIndex is WRONG but we set feedback to correct.
+    // We should probably update the answers state to be the correct one if phoenix feather is used.
+    // Let's adjust handleAnswer.
+    
+    let calculatedScore = correctCount * 10;
+    if (isGoldenAppleActive) calculatedScore *= 2;
+    
+    // Calculate diamonds: 10 base + 1 per 10 XP
+    let awardedDiamonds = 10 + Math.floor(calculatedScore / 10);
+    if (isGoldenAppleActive) awardedDiamonds *= 2;
+
+    setScore(calculatedScore);
+    setSubmitted(true);
+
+    // Push to leaderboard
+    await setDoc(doc(db, "rooms", room.id, "leaderboard", userData.uid), {
+      score: calculatedScore,
+      correctCount: correctCount,
+      incorrectCount: questions.length - correctCount,
+      status: "finished",
+      submittedAt: new Date()
+    }, { merge: true });
+
+    // Calculate room rank
+    try {
+      const lbRef = collection(db, "rooms", room.id, "leaderboard");
+      const qRank = query(lbRef, where("score", ">", calculatedScore));
+      const rankSnapshot = await getCountFromServer(qRank);
+      setRoomRank(rankSnapshot.data().count + 1);
+    } catch (e) {
+      console.error("Error calculating room rank:", e);
+    }
+
+    // Award XP, Diamonds and update inventory
+    const userRef = doc(db, "users", userData.uid);
+    await updateDoc(userRef, {
+      xp: increment(calculatedScore),
+      diamonds: increment(awardedDiamonds),
+      quizzesPlayed: increment(1),
+      inventory: inventory // Save updated inventory (items used)
+    });
+
+    // Save to user history
+    const historyRef = collection(db, "users", userData.uid, "history");
+    await addDoc(historyRef, {
+      quizId: room.quizId,
+      quizTitle: quiz?.title || "Kuis Tanpa Judul",
+      score: calculatedScore,
+      roomCode: room.roomCode,
+      completedAt: new Date()
+    });
+  };
+
+  const handleUseItem = (itemId: string) => {
+    if (isAnswering || feedback || inventory[itemId] <= 0) return;
+
+    if (itemId === "clear_answers") {
+      const currentQ = questions[currentQuestionIdx];
+      const wrongOptions = currentQ.options
+        .map((_: any, i: number) => i)
+        .filter((i: number) => i !== currentQ.correctAnswerIndex);
+      
+      const toRemove = shuffleArray(wrongOptions).slice(0, 2);
+      setRemovedOptions(toRemove);
+      setInventory(prev => ({ ...prev, clear_answers: prev.clear_answers - 1 }));
+      setUsedItemsInSession(prev => [...prev, "clear_answers"]);
+      playSound("item");
+    } else if (itemId === "golden_apple") {
+      if (isGoldenAppleActive) return;
+      setIsGoldenAppleActive(true);
+      setInventory(prev => ({ ...prev, golden_apple: prev.golden_apple - 1 }));
+      setUsedItemsInSession(prev => [...prev, "golden_apple"]);
+      playSound("item");
     }
   };
 
-  if (!userData) return null;
+  if (!room) return <div className="p-8 text-center text-brand-navy/60 bg-brand-cream min-h-screen flex items-center justify-center">Mencari ruangan...</div>;
+  
+  if (room.status === "waiting") {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-brand-cream text-brand-navy p-4">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-white border border-brand-navy/5 p-12 rounded-[48px] shadow-2xl shadow-brand-navy/5 max-w-md w-full text-center relative overflow-hidden"
+        >
+          <div className="absolute top-0 left-0 w-full h-1 bg-brand-orange" />
+          
+          <div className="relative mb-8">
+            <motion.div 
+              animate={{ rotate: 360 }}
+              transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
+              className="w-24 h-24 border-2 border-dashed border-brand-orange/30 rounded-full mx-auto"
+            />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Gamepad2 className="w-10 h-10 text-brand-orange animate-bounce" />
+            </div>
+          </div>
+
+          <h2 className="text-3xl font-black mb-4 tracking-tight text-brand-navy">Siap-siap!</h2>
+          <p className="text-brand-navy/60 mb-8 leading-relaxed">Guru sedang menyiapkan petualangan untukmu. Jangan ke mana-mana ya!</p>
+          
+          <div className="flex items-center justify-center gap-2 text-brand-orange font-bold text-sm uppercase tracking-widest">
+            <div className="w-2 h-2 bg-brand-orange rounded-full animate-ping" />
+            Menunggu Guru...
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (room.status === "finished" && !submitted) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-brand-cream text-brand-navy p-4">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white border border-brand-navy/5 p-12 rounded-[48px] shadow-2xl shadow-brand-navy/5 max-w-md w-full text-center"
+        >
+          <div className="w-20 h-20 bg-brand-navy/10 text-brand-navy rounded-3xl flex items-center justify-center mx-auto mb-8">
+            <Square className="w-10 h-10" />
+          </div>
+          <h2 className="text-3xl font-black mb-4 text-brand-navy">Kuis Berakhir</h2>
+          <p className="text-brand-navy/60 mb-8 leading-relaxed">Guru telah mengakhiri petualangan ini. Sampai jumpa di kuis berikutnya!</p>
+          <button 
+            onClick={() => router.push("/siswa")} 
+            className="w-full bg-brand-navy text-white font-bold py-4 rounded-2xl hover:bg-brand-black transition-all"
+          >
+            Kembali ke Dashboard
+          </button>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (submitted) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-brand-cream text-brand-navy p-4">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-white border border-brand-navy/5 p-8 md:p-12 rounded-[48px] shadow-2xl shadow-brand-navy/5 max-w-2xl w-full text-center relative overflow-hidden flex flex-col"
+        >
+          <div className="absolute top-0 left-0 w-full h-1 bg-brand-orange" />
+          
+          {!showReview ? (
+            <motion.div
+              initial={{ y: 50, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.3 }}
+            >
+              <div className="w-24 h-24 bg-brand-orange/10 text-brand-orange rounded-[32px] flex items-center justify-center mx-auto mb-8 shadow-2xl shadow-brand-orange/10">
+                <Trophy className="w-12 h-12" />
+              </div>
+              <h2 className="text-4xl font-black mb-2 tracking-tight text-brand-navy">Luar Biasa!</h2>
+              <p className="text-brand-navy/60 mb-10 font-medium">Kamu telah menyelesaikan tantangan ini.</p>
+              
+              <div className="relative mb-12">
+                <div className="text-7xl font-black text-brand-navy mb-2">{score}</div>
+                <div className="text-brand-orange font-black uppercase tracking-widest text-sm mb-4">Total XP Didapat</div>
+                
+                {roomRank && (
+                  <div className="mb-6 flex items-center justify-center gap-2 text-brand-navy/40 font-black text-[10px] uppercase tracking-widest">
+                    <Trophy className="w-4 h-4" />
+                    Peringkat #{roomRank} di Ruangan Ini
+                  </div>
+                )}
+
+                <div className="flex items-center justify-center gap-2 bg-sky-50 text-sky-600 px-6 py-3 rounded-2xl mx-auto w-fit border border-sky-100">
+                  <Diamond className="w-5 h-5 fill-current" />
+                  <span className="text-2xl font-black">+{10 + Math.floor(score / 10)}</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button 
+                  onClick={() => setShowReview(true)} 
+                  className="w-full bg-brand-cream text-brand-navy font-black text-lg py-5 rounded-3xl hover:bg-brand-navy/5 transition-all border border-brand-navy/5"
+                >
+                  Tinjau Jawaban
+                </button>
+                <button 
+                  onClick={() => router.push("/siswa")} 
+                  className="w-full bg-brand-navy text-white font-black text-lg py-5 rounded-3xl hover:bg-brand-black transition-all shadow-xl shadow-brand-navy/20"
+                >
+                  Lanjutkan ke Dashboard
+                </button>
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex flex-col h-full max-h-[70vh]"
+            >
+              <div className="flex justify-between items-center mb-8">
+                <h2 className="text-2xl font-black text-brand-navy tracking-tight">Tinjauan Jawaban</h2>
+                <button 
+                  onClick={() => setShowReview(false)}
+                  className="text-brand-navy/40 hover:text-brand-navy font-black text-xs uppercase tracking-widest"
+                >
+                  Kembali
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto space-y-6 pr-2 text-left">
+                {questions.map((q, idx) => {
+                  const studentAnswer = answers[idx];
+                  const isCorrect = studentAnswer === q.correctAnswerIndex;
+                  
+                  return (
+                    <div key={idx} className="p-6 bg-brand-cream/30 rounded-3xl border border-brand-navy/5 space-y-4">
+                      <div className="flex gap-4">
+                        <span className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black flex-shrink-0 ${isCorrect ? "bg-emerald-500 text-white" : "bg-red-500 text-white"}`}>
+                          {idx + 1}
+                        </span>
+                        <h3 className="font-bold text-brand-navy text-lg leading-tight">{q.question}</h3>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 gap-2 pl-12">
+                        {q.options.map((opt: string, oIdx: number) => {
+                          const isStudentChoice = studentAnswer === oIdx;
+                          const isCorrectChoice = oIdx === q.correctAnswerIndex;
+                          
+                          let borderClass = "border-brand-navy/5";
+                          let bgClass = "bg-white";
+                          let textClass = "text-brand-navy/60";
+                          
+                          if (isCorrectChoice) {
+                            borderClass = "border-emerald-500";
+                            bgClass = "bg-emerald-50";
+                            textClass = "text-emerald-700";
+                          } else if (isStudentChoice && !isCorrectChoice) {
+                            borderClass = "border-red-500";
+                            bgClass = "bg-red-50";
+                            textClass = "text-red-700";
+                          }
+
+                          return (
+                            <div key={oIdx} className={`p-3 rounded-xl text-sm font-medium border flex items-center justify-between ${borderClass} ${bgClass} ${textClass}`}>
+                              <div className="flex items-center">
+                                <span className="font-black mr-2 opacity-40">{String.fromCharCode(65 + oIdx)}.</span>
+                                {opt}
+                              </div>
+                              {isCorrectChoice && <span className="text-[8px] font-black uppercase tracking-widest bg-emerald-500 text-white px-1.5 py-0.5 rounded">Benar</span>}
+                              {isStudentChoice && !isCorrectChoice && <span className="text-[8px] font-black uppercase tracking-widest bg-red-500 text-white px-1.5 py-0.5 rounded">Pilihanmu</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button 
+                onClick={() => setShowReview(false)} 
+                className="mt-8 w-full bg-brand-navy text-white font-black text-lg py-5 rounded-3xl hover:bg-brand-black transition-all"
+              >
+                Selesai Meninjau
+              </button>
+            </motion.div>
+          )}
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (questions.length === 0) return null;
+
+  const currentQ = questions[currentQuestionIdx];
+  const isLastQuestion = currentQuestionIdx === questions.length - 1;
+
+  const shakeAnimation = {
+    x: [0, -10, 10, -10, 10, 0],
+    transition: { duration: 0.4 }
+  };
 
   return (
-    <div className="min-h-screen bg-brand-cream flex flex-col items-center">
-      <StudentOnboardingModal />
+    <div className="min-h-screen bg-brand-cream flex flex-col items-center overflow-hidden">
       <div className="w-full max-w-md md:max-w-2xl px-4 py-6 md:py-10">
-        <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 bg-white p-6 rounded-[32px] shadow-sm gap-4 border border-brand-navy/5">
+        {/* Item Bar */}
+        <div className="flex gap-2 mb-4 overflow-x-auto no-scrollbar pb-1">
+          {["clear_answers", "phoenix_feather", "golden_apple"].map((itemId) => {
+            const count = inventory[itemId] || 0;
+            const isActive = itemId === "golden_apple" && isGoldenAppleActive;
+            const icon = itemId === "clear_answers" ? "🧹" : itemId === "phoenix_feather" ? "🪶" : "🍎";
+            const name = itemId === "clear_answers" ? "Clear" : itemId === "phoenix_feather" ? "Phoenix" : "Golden";
+            
+            return (
+              <button
+                key={itemId}
+                onClick={() => handleUseItem(itemId)}
+                disabled={count <= 0 || (itemId === "phoenix_feather") || isActive || feedback !== null}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all border-2 ${
+                  isActive 
+                    ? "bg-brand-orange text-white border-brand-orange shadow-lg" 
+                    : count > 0 
+                    ? "bg-white text-brand-navy border-brand-navy/5 hover:border-brand-orange shadow-sm" 
+                    : "bg-brand-cream text-brand-navy/20 border-transparent opacity-50 cursor-not-allowed"
+                }`}
+              >
+                <span className="text-base">{icon}</span>
+                <span>{name} ({count})</span>
+                {itemId === "phoenix_feather" && phoenixFeatherUsed > 0 && (
+                  <span className="bg-brand-navy text-white px-1.5 py-0.5 rounded-md text-[8px]">{phoenixFeatherUsed}/5</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mb-6 flex justify-between items-center bg-white p-5 rounded-2xl shadow-sm border border-brand-navy/5">
+          <div className="flex flex-col">
+            <span className="font-black text-brand-navy/40 uppercase tracking-widest text-[10px]">Pertanyaan {currentQuestionIdx + 1} dari {questions.length}</span>
+            <div className="flex items-center gap-2 mt-1">
+              {streak > 1 && (
+                <motion.div 
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  className="flex items-center gap-1 bg-orange-100 text-brand-orange px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest"
+                >
+                  <Flame className="w-3 h-3 fill-current" />
+                  {streak} Streak!
+                </motion.div>
+              )}
+            </div>
+          </div>
+          <span className="font-mono bg-brand-navy text-white px-3 py-1 rounded-full text-[10px] font-black tracking-widest uppercase">RUANGAN: {roomCode}</span>
+        </div>
+
+        <motion.div 
+          key={currentQuestionIdx}
+          initial={{ x: 50, opacity: 0 }}
+          animate={feedback === "incorrect" ? shakeAnimation : { x: 0, opacity: 1 }}
+          exit={{ x: -50, opacity: 0 }}
+          className={`bg-white p-8 md:p-12 rounded-[40px] shadow-sm mb-6 border-4 transition-colors duration-300 ${
+            feedback === "correct" ? "border-emerald-500" : 
+            feedback === "incorrect" ? "border-red-500" : 
+            "border-transparent"
+          }`}
+        >
+          <h2 className="text-xl md:text-3xl font-black text-brand-navy mb-8 md:mb-10 leading-tight tracking-tight">
+            {currentQ.question}
+          </h2>
+
+          <div className="grid grid-cols-1 gap-3 md:gap-4">
+            {currentQ.options.map((opt: string, idx: number) => {
+              const isSelected = answers[currentQuestionIdx] === idx;
+              const isCorrect = idx === currentQ.correctAnswerIndex;
+              
+              let buttonClass = "border-brand-navy/5 hover:border-brand-orange/30 hover:bg-brand-cream text-brand-navy/70";
+              const isRemoved = removedOptions.includes(idx);
+
+              if (isRemoved) {
+                buttonClass = "opacity-20 grayscale pointer-events-none border-transparent";
+              } else if (feedback && isCorrect) {
+                buttonClass = "border-emerald-500 bg-emerald-50 text-emerald-700 shadow-lg shadow-emerald-500/10";
+              } else if (feedback && isSelected && !isCorrect) {
+                buttonClass = "border-red-500 bg-red-50 text-red-700 shadow-lg shadow-red-500/10";
+              } else if (isSelected) {
+                buttonClass = "border-brand-orange bg-brand-orange/5 text-brand-orange shadow-lg shadow-brand-orange/10";
+              }
+
+              return (
+                <button
+                  key={idx}
+                  disabled={isAnswering || feedback !== null || isRemoved}
+                  onClick={() => handleAnswer(idx)}
+                  className={`p-5 md:p-6 rounded-2xl text-left font-bold text-base md:text-lg transition-all border-2 active:scale-95 ${buttonClass}`}
+                >
+                  <div className="flex items-center gap-4 md:gap-6">
+                    <span className={`w-8 h-8 md:w-10 md:h-10 flex-shrink-0 rounded-xl flex items-center justify-center text-xs md:text-sm font-black transition-colors ${
+                      isSelected ? "bg-brand-orange text-white" : 
+                      feedback && isCorrect ? "bg-emerald-500 text-white" :
+                      isRemoved ? "bg-transparent" :
+                      "bg-brand-navy/5 text-brand-navy/40"
+                    }`}>
+                      {isRemoved ? <Ghost className="w-4 h-4 opacity-20" /> : String.fromCharCode(65 + idx)}
+                    </span>
+                    <span className="line-clamp-2">{isRemoved ? "???" : opt}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </motion.div>
+
+        <div className="flex justify-between items-center px-2">
           <div className="flex items-center gap-4">
-            <Avatar avatarString={userData.avatar} size="lg" className="border-4 border-white shadow-xl" />
-            <div>
-              <h1 className="text-xl font-black text-brand-navy tracking-tight">{userData.displayName}</h1>
-              <p className="text-brand-navy/60 text-xs font-bold uppercase tracking-wider">
-                Level {level} • {userData.studentClass || "Siswa"}
-              </p>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black text-brand-navy/40 uppercase tracking-widest">Skor Saat Ini</span>
+              <span className="text-xl font-black text-brand-navy">{Object.values(answers).reduce((acc, val, i) => acc + (val === questions[i].correctAnswerIndex ? 10 : 0), 0)} XP</span>
             </div>
           </div>
           
-          <div className="flex items-center gap-6 w-full md:w-auto">
-            <div className="flex-1 md:w-48">
-              <div className="flex justify-between text-[10px] font-black text-brand-navy/40 mb-1 uppercase tracking-widest">
-                <span>XP: {xp}</span>
-                <span>Next: {xpToNextLevel}</span>
-              </div>
-              <div className="h-2 bg-brand-cream rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-brand-orange transition-all duration-1000" 
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-            </div>
-            <button onClick={logout} className="p-2 text-brand-navy/40 hover:text-brand-orange transition-colors">
-              <LogOut className="w-6 h-6" />
+          {isLastQuestion && feedback === null && (
+            <button
+              onClick={submitQuiz}
+              disabled={answers[currentQuestionIdx] === undefined || isAnswering}
+              className="bg-brand-orange text-white px-8 py-4 rounded-2xl font-black text-sm hover:bg-brand-orange/90 shadow-lg shadow-brand-orange/20 transition-all disabled:opacity-50 active:scale-95"
+            >
+              Kumpulkan
             </button>
-          </div>
-        </header>
-
-        <div className="grid grid-cols-4 gap-3 mb-6">
-          <div className="bg-white p-4 rounded-3xl shadow-sm border border-brand-navy/5 flex flex-col items-center text-center">
-            <div className="p-2 bg-brand-orange/10 text-brand-orange rounded-xl mb-2">
-              <Trophy className="w-5 h-5" />
-            </div>
-            <div className="text-[10px] text-brand-navy/40 font-black uppercase tracking-widest mb-1">Rank</div>
-            <div className="text-lg font-black text-brand-navy">{rank}</div>
-          </div>
-          <div className="bg-white p-4 rounded-3xl shadow-sm border border-brand-navy/5 flex flex-col items-center text-center">
-            <div className="p-2 bg-brand-navy/10 text-brand-navy rounded-xl mb-2">
-              <Zap className="w-5 h-5" />
-            </div>
-            <div className="text-[10px] text-brand-navy/40 font-black uppercase tracking-widest mb-1">XP</div>
-            <div className="text-lg font-black text-brand-navy">{xp}</div>
-          </div>
-          <div className="bg-white p-4 rounded-3xl shadow-sm border border-brand-navy/5 flex flex-col items-center text-center">
-            <div className="p-2 bg-brand-orange/10 text-brand-orange rounded-xl mb-2">
-              <Star className="w-5 h-5" />
-            </div>
-            <div className="text-[10px] text-brand-navy/40 font-black uppercase tracking-widest mb-1">Quiz</div>
-            <div className="text-lg font-black text-brand-navy">{quizzesPlayed}</div>
-          </div>
-          <div className="bg-white p-4 rounded-3xl shadow-sm border border-brand-navy/5 flex flex-col items-center text-center">
-            <div className="p-2 bg-sky-100 text-sky-500 rounded-xl mb-2">
-              <Diamond className="w-5 h-5 fill-current" />
-            </div>
-            <div className="text-[10px] text-brand-navy/40 font-black uppercase tracking-widest mb-1">Diamond</div>
-            <div className="text-lg font-black text-brand-navy">{userData.diamonds || 0}</div>
-          </div>
-        </div>
-
-        <div className="flex gap-2 mb-6 overflow-x-auto pb-2 no-scrollbar">
-          <button 
-            onClick={() => setActiveTab("join")}
-            className={`flex-1 min-w-[80px] py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${activeTab === "join" ? "bg-brand-navy text-white shadow-lg shadow-brand-navy/20" : "bg-white text-brand-navy/40 hover:bg-brand-navy/5"}`}
-          >
-            Gabung
-          </button>
-          <button 
-            onClick={() => setActiveTab("history")}
-            className={`flex-1 min-w-[80px] py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${activeTab === "history" ? "bg-brand-navy text-white shadow-lg shadow-brand-navy/20" : "bg-white text-brand-navy/40 hover:bg-brand-navy/5"}`}
-          >
-            Riwayat
-          </button>
-          <button 
-            onClick={() => setActiveTab("leaderboard")}
-            className={`flex-1 min-w-[80px] py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${activeTab === "leaderboard" ? "bg-brand-navy text-white shadow-lg shadow-brand-navy/20" : "bg-white text-brand-navy/40 hover:bg-brand-navy/5"}`}
-          >
-            Global
-          </button>
-          <button 
-            onClick={() => setActiveTab("shop")}
-            className={`flex-1 min-w-[80px] py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${activeTab === "shop" ? "bg-brand-navy text-white shadow-lg shadow-brand-navy/20" : "bg-white text-brand-navy/40 hover:bg-brand-navy/5"}`}
-          >
-            Toko
-          </button>
-        </div>
-
-        <div className="flex flex-col items-center justify-center py-4">
-          {activeTab === "join" && (
-            <div className="bg-white p-8 md:p-10 rounded-[40px] shadow-xl shadow-brand-navy/5 w-full text-center border border-brand-navy/5 animate-in fade-in zoom-in-95 duration-300">
-              <div className="w-20 h-20 bg-brand-navy text-white rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-brand-navy/20 rotate-3 hover:rotate-0 transition-transform cursor-pointer">
-                <Play className="w-10 h-10 ml-1" />
-              </div>
-              <h2 className="text-2xl font-black text-brand-navy mb-2 tracking-tight">Gabung Kuis</h2>
-              <p className="text-brand-navy/60 text-sm mb-8 leading-relaxed font-medium">Masukkan 6 digit kode ruangan yang diberikan oleh guru Anda untuk memulai petualangan!</p>
-              
-              <form onSubmit={joinRoom} className="space-y-6">
-                <input
-                  type="text"
-                  maxLength={6}
-                  value={roomCode}
-                  onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                  placeholder="000000"
-                  className="w-full text-center text-4xl md:text-5xl font-mono tracking-[0.4em] p-5 md:p-6 bg-brand-cream/50 border-2 border-transparent rounded-3xl focus:border-brand-orange focus:bg-white focus:ring-8 focus:ring-brand-orange/5 outline-none transition-all uppercase placeholder:text-brand-navy/20 text-brand-navy"
-                />
-                <button
-                  type="submit"
-                  disabled={roomCode.length !== 6}
-                  className="w-full bg-brand-navy text-white font-black text-lg py-5 rounded-3xl hover:bg-brand-black hover:shadow-xl hover:shadow-brand-navy/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
-                >
-                  Masuk Ruangan
-                </button>
-              </form>
-            </div>
-          )}
-
-          {activeTab === "history" && (
-            <div className="bg-white p-6 md:p-8 rounded-[40px] shadow-xl shadow-brand-navy/5 w-full border border-brand-navy/5 animate-in fade-in slide-in-from-bottom-4 duration-300">
-              <div className="flex items-center gap-3 mb-6">
-                <History className="w-6 h-6 text-brand-orange" />
-                <h2 className="text-xl font-black text-brand-navy tracking-tight">Riwayat Kuis</h2>
-              </div>
-              
-              {quizHistory.length === 0 ? (
-                <div className="text-center py-12 bg-brand-cream/30 rounded-3xl border-2 border-dashed border-brand-navy/5">
-                  <p className="text-brand-navy/40 font-bold text-sm">Belum ada riwayat kuis.</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {quizHistory.map((item) => (
-                    <div key={item.id} className="p-4 bg-brand-cream/50 rounded-2xl border border-transparent hover:border-brand-orange/20 transition-all flex justify-between items-center">
-                      <div>
-                        <h3 className="font-black text-brand-navy text-sm mb-1">{item.quizTitle}</h3>
-                        <p className="text-[10px] text-brand-navy/40 font-black uppercase tracking-widest">
-                          {item.completedAt?.toDate().toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })} • Room: {item.roomCode}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-lg font-black text-brand-orange">+{item.score}</div>
-                        <div className="text-[8px] text-brand-navy/40 font-black uppercase tracking-widest">XP</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {activeTab === "shop" && (
-            <div className="bg-white p-6 md:p-8 rounded-[40px] shadow-xl shadow-brand-navy/5 w-full border border-brand-navy/5 animate-in fade-in slide-in-from-bottom-4 duration-300">
-              <Shop />
-            </div>
-          )}
-
-          {activeTab === "leaderboard" && (
-            <div className="bg-white p-6 md:p-8 rounded-[40px] shadow-xl shadow-brand-navy/5 w-full border border-brand-navy/5 animate-in fade-in slide-in-from-bottom-4 duration-300">
-              <div className="flex items-center gap-3 mb-6">
-                <Users className="w-6 h-6 text-brand-orange" />
-                <h2 className="text-xl font-black text-brand-navy tracking-tight">Peringkat Global</h2>
-              </div>
-
-              {/* Podium Section */}
-              {globalLeaderboard.length > 0 && (
-                <div className="flex items-end justify-center gap-2 mb-10 mt-4 h-48">
-                  {/* 2nd Place */}
-                  <div className="flex flex-col items-center flex-1 max-w-[100px]">
-                    {globalLeaderboard[1] ? (
-                      <motion.div 
-                        initial={{ y: 20, opacity: 0 }}
-                        animate={{ y: 0, opacity: 1 }}
-                        transition={{ delay: 0.2 }}
-                        className="flex flex-col items-center"
-                      >
-                        <Avatar avatarString={globalLeaderboard[1].avatar} size="md" className="mb-2 border-2 border-slate-300" />
-                        <div className="text-[10px] font-black text-brand-navy truncate w-full text-center mb-1">{globalLeaderboard[1].displayName}</div>
-                        <div className="w-full bg-slate-300 h-20 rounded-t-2xl flex items-center justify-center shadow-lg">
-                          <span className="text-2xl font-black text-white">2</span>
-                        </div>
-                      </motion.div>
-                    ) : (
-                      <div className="w-full bg-brand-cream/50 h-16 rounded-t-2xl border-x border-t border-brand-navy/5" />
-                    )}
-                  </div>
-
-                  {/* 1st Place */}
-                  <div className="flex flex-col items-center flex-1 max-w-[120px]">
-                    {globalLeaderboard[0] ? (
-                      <motion.div 
-                        initial={{ y: 20, opacity: 0 }}
-                        animate={{ y: 0, opacity: 1 }}
-                        className="flex flex-col items-center"
-                      >
-                        <Trophy className="w-6 h-6 text-yellow-400 mb-1 animate-bounce" />
-                        <Avatar avatarString={globalLeaderboard[0].avatar} size="lg" className="mb-2 border-4 border-yellow-400 shadow-xl" />
-                        <div className="text-xs font-black text-brand-navy truncate w-full text-center mb-1">{globalLeaderboard[0].displayName}</div>
-                        <div className="w-full bg-yellow-400 h-32 rounded-t-2xl flex items-center justify-center shadow-xl relative overflow-hidden">
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent" />
-                          <span className="text-4xl font-black text-white relative z-10">1</span>
-                        </div>
-                      </motion.div>
-                    ) : (
-                      <div className="w-full bg-brand-cream/50 h-24 rounded-t-2xl border-x border-t border-brand-navy/5" />
-                    )}
-                  </div>
-
-                  {/* 3rd Place */}
-                  <div className="flex flex-col items-center flex-1 max-w-[100px]">
-                    {globalLeaderboard[2] ? (
-                      <motion.div 
-                        initial={{ y: 20, opacity: 0 }}
-                        animate={{ y: 0, opacity: 1 }}
-                        transition={{ delay: 0.4 }}
-                        className="flex flex-col items-center"
-                      >
-                        <Avatar avatarString={globalLeaderboard[2].avatar} size="md" className="mb-2 border-2 border-amber-600" />
-                        <div className="text-[10px] font-black text-brand-navy truncate w-full text-center mb-1">{globalLeaderboard[2].displayName}</div>
-                        <div className="w-full bg-amber-600 h-16 rounded-t-2xl flex items-center justify-center shadow-lg">
-                          <span className="text-2xl font-black text-white">3</span>
-                        </div>
-                      </motion.div>
-                    ) : (
-                      <div className="w-full bg-brand-cream/50 h-12 rounded-t-2xl border-x border-t border-brand-navy/5" />
-                    )}
-                  </div>
-                </div>
-              )}
-              
-              <div className="space-y-3">
-                {globalLeaderboard.length === 0 ? (
-                  <div className="text-center py-12 bg-brand-cream/30 rounded-3xl border-2 border-dashed border-brand-navy/10">
-                    <Trophy className="w-10 h-10 text-brand-navy/20 mx-auto mb-4" />
-                    <p className="text-brand-navy/40 text-sm font-bold">Belum ada siswa yang mengerjakan kuis.</p>
-                  </div>
-                ) : (
-                  globalLeaderboard.map((user, idx) => (
-                    <div 
-                      key={user.id} 
-                      className={`p-4 rounded-2xl flex justify-between items-center transition-all ${user.id === userData.uid ? "bg-brand-navy text-white shadow-lg shadow-brand-navy/20 scale-[1.02]" : "bg-brand-cream/50 border border-transparent"}`}
-                    >
-                      <div className="flex items-center gap-4">
-                        <span className={`w-8 h-8 flex items-center justify-center rounded-xl font-black text-xs ${idx === 0 ? "bg-yellow-400 text-white" : idx === 1 ? "bg-slate-300 text-white" : idx === 2 ? "bg-amber-600 text-white" : "bg-brand-navy/5 text-brand-navy/40"}`}>
-                          {idx + 1}
-                        </span>
-                        <Avatar avatarString={user.avatar} size="md" className="shadow-sm" />
-                        <div>
-                          <h3 className={`font-black text-sm ${user.id === userData.uid ? "text-white" : "text-brand-navy"}`}>{user.displayName}</h3>
-                          <p className={`text-[10px] font-black uppercase tracking-widest ${user.id === userData.uid ? "text-white/60" : "text-brand-navy/40"}`}>
-                            {user.studentClass || "Siswa"} • Level {Math.floor((user.xp || 0) / 100) + 1}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className={`text-lg font-black ${user.id === userData.uid ? "text-white" : "text-brand-navy"}`}>{user.xp || 0}</div>
-                        <div className={`text-[8px] font-black uppercase tracking-widest ${user.id === userData.uid ? "text-white/40" : "text-brand-navy/40"}`}>Total XP</div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
           )}
         </div>
       </div>
+
+      <AnimatePresence>
+        {feedback && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed bottom-10 left-1/2 -translate-x-1/2 z-50"
+          >
+            <div className={`px-8 py-4 rounded-2xl font-black text-white shadow-2xl flex items-center gap-3 ${feedback === "correct" ? "bg-emerald-500" : "bg-red-500"}`}>
+              {feedback === "correct" ? (
+                <>
+                  <Trophy className="w-6 h-6" />
+                  BENAR! +10 XP
+                </>
+              ) : (
+                <>
+                  <Zap className="w-6 h-6" />
+                  KURANG TEPAT!
+                </>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

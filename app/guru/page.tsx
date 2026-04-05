@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { collection, addDoc, query, where, getDocs, orderBy, deleteDoc, doc, limit } from "firebase/firestore";
+import { collection, addDoc, query, where, getDocs, orderBy, deleteDoc, doc, limit, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { Plus, Play, History, LogOut, Sparkles, BookOpen, Trash2, X, Eye, Trophy, Search, Filter } from "lucide-react";
+import { Plus, Play, History, LogOut, Sparkles, BookOpen, Trash2, X, Eye, Trophy, Search, Filter, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { GoogleGenAI, Type } from "@google/genai";
 import Avatar from "@/components/Avatar";
@@ -39,11 +39,26 @@ export default function GuruDashboard() {
   const [viewingQuiz, setViewingQuiz] = useState<Quiz | null>(null);
   const [deletingRoomId, setDeletingRoomId] = useState<string | null>(null);
   const [deletingQuizId, setDeletingQuizId] = useState<string | null>(null);
-  const [topStudents, setTopStudents] = useState<any[]>([]);
-  const [isViewingLeaderboard, setIsViewingLeaderboard] = useState(false);
-  const [leaderboardFilter, setLeaderboardFilter] = useState("");
-  const [fullLeaderboard, setFullLeaderboard] = useState<any[]>([]);
-  const [isFetchingLeaderboard, setIsFetchingLeaderboard] = useState(false);
+  const [viewingRoom, setViewingRoom] = useState<Room | null>(null);
+  const [roomLeaderboard, setRoomLeaderboard] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!viewingRoom) {
+      setRoomLeaderboard([]);
+      return;
+    }
+
+    const q = query(
+      collection(db, "rooms", viewingRoom.id, "leaderboard"),
+      orderBy("score", "desc")
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setRoomLeaderboard(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    return () => unsubscribe();
+  }, [viewingRoom]);
 
   const fetchQuizzes = useCallback(async () => {
     if (!userData?.uid) return;
@@ -54,7 +69,7 @@ export default function GuruDashboard() {
     } catch (error) {
       console.error("Error fetching quizzes:", error);
     }
-  }, [userData?.uid]);
+  }, [userData]);
 
   const fetchRooms = useCallback(async () => {
     if (!userData?.uid) return;
@@ -65,67 +80,18 @@ export default function GuruDashboard() {
     } catch (error) {
       console.error("Error fetching rooms:", error);
     }
-  }, [userData?.uid]);
-
-  const fetchTopStudents = useCallback(async () => {
-    try {
-      const q = query(
-        collection(db, "users"), 
-        where("role", "==", "Siswa"),
-        orderBy("xp", "desc"),
-        limit(5)
-      );
-      const snapshot = await getDocs(q);
-      setTopStudents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    } catch (error) {
-      console.error("Error fetching top students:", error);
-    }
-  }, []);
-
-  const fetchFullLeaderboard = useCallback(async (classFilter: string) => {
-    setIsFetchingLeaderboard(true);
-    try {
-      let q;
-      if (classFilter) {
-        q = query(
-          collection(db, "users"), 
-          where("role", "==", "Siswa"),
-          where("studentClass", "==", classFilter),
-          orderBy("xp", "desc")
-        );
-      } else {
-        q = query(
-          collection(db, "users"), 
-          where("role", "==", "Siswa"),
-          orderBy("xp", "desc"),
-          limit(50)
-        );
-      }
-      const snapshot = await getDocs(q);
-      setFullLeaderboard(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    } catch (error) {
-      console.error("Error fetching full leaderboard:", error);
-    } finally {
-      setIsFetchingLeaderboard(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (isViewingLeaderboard) {
-      fetchFullLeaderboard(leaderboardFilter);
-    }
-  }, [isViewingLeaderboard, leaderboardFilter, fetchFullLeaderboard]);
+  }, [userData]);
 
   useEffect(() => {
     const loadData = async () => {
       if (userData?.uid) {
         setIsLoading(true);
-        await Promise.all([fetchQuizzes(), fetchRooms(), fetchTopStudents()]);
+        await Promise.all([fetchQuizzes(), fetchRooms()]);
         setIsLoading(false);
       }
     };
     loadData();
-  }, [userData, fetchQuizzes, fetchRooms, fetchTopStudents]);
+  }, [userData, fetchQuizzes, fetchRooms]);
 
   const generateQuizWithAI = async () => {
     if (!topic || !userData?.subject) return;
@@ -496,9 +462,15 @@ export default function GuruDashboard() {
                       <div className="flex justify-between items-center gap-2">
                         <button 
                           onClick={() => router.push(`/room/guru/${room.roomCode}`)}
-                          className="flex-1 text-center py-2 text-xs font-black text-brand-orange hover:text-brand-orange/80 transition-colors uppercase tracking-widest"
+                          className="flex-1 text-center py-2 text-xs font-black text-brand-orange hover:text-brand-orange/80 transition-colors uppercase tracking-widest bg-brand-orange/10 rounded-xl"
                         >
-                          Pantau &rarr;
+                          Masuk &rarr;
+                        </button>
+                        <button 
+                          onClick={() => setViewingRoom(room)}
+                          className="flex-1 text-center py-2 text-xs font-black text-brand-navy hover:text-brand-navy/80 transition-colors uppercase tracking-widest bg-brand-navy/5 rounded-xl"
+                        >
+                          Pantau
                         </button>
                         <button 
                           type="button"
@@ -525,140 +497,76 @@ export default function GuruDashboard() {
                 </div>
               )}
             </section>
-
-            {/* Student Ranking Monitoring */}
-            <section className="bg-white p-6 md:p-8 rounded-[40px] shadow-sm border border-brand-navy/5">
-              <div className="flex items-center justify-between mb-6 md:mb-8">
-                <h2 className="text-xl md:text-2xl font-black text-brand-navy flex items-center gap-3 tracking-tight">
-                  <Trophy className="w-6 h-6 md:w-7 md:h-7 text-brand-orange" />
-                  Peringkat Siswa
-                </h2>
-                <button 
-                  onClick={() => setIsViewingLeaderboard(true)}
-                  className="text-[10px] font-black text-brand-orange uppercase tracking-widest hover:underline"
-                >
-                  Lihat Semua
-                </button>
-              </div>
-              {topStudents.length === 0 ? (
-                <p className="text-brand-navy/40 text-center py-8 text-sm font-bold">Belum ada data peringkat.</p>
-              ) : (
-                <div className="space-y-4">
-                  {topStudents.map((student, index) => (
-                    <div key={student.id} className="flex items-center justify-between p-4 bg-brand-cream/30 rounded-3xl border border-transparent hover:border-brand-orange/10 transition-all">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-xs ${
-                          index === 0 ? "bg-yellow-400 text-white" : 
-                          index === 1 ? "bg-slate-300 text-white" : 
-                          index === 2 ? "bg-amber-600 text-white" : 
-                          "bg-brand-navy/10 text-brand-navy"
-                        }`}>
-                          {index + 1}
-                        </div>
-                        <Avatar avatarString={student.avatar} size="sm" />
-                        <div>
-                          <p className="font-black text-brand-navy text-sm leading-tight">{student.displayName}</p>
-                          <p className="text-[10px] font-bold text-brand-navy/40 uppercase tracking-widest">{student.studentClass || "Siswa"}</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-black text-brand-orange text-sm">{student.xp} XP</p>
-                        <p className="text-[8px] font-bold text-brand-navy/30 uppercase tracking-widest">Level {Math.floor((student.xp || 0) / 100) + 1}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
           </div>
         </div>
       </div>
 
-      {/* Full Leaderboard Modal */}
-      {isViewingLeaderboard && (
+      {/* Room Leaderboard Modal */}
+      {viewingRoom && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-brand-navy/60 backdrop-blur-sm animate-in fade-in">
           <div className="bg-white w-full max-w-3xl max-h-[90vh] rounded-[48px] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-300">
             <div className="p-8 border-b border-brand-navy/5 flex items-center justify-between bg-brand-cream/20">
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 bg-brand-orange rounded-2xl flex items-center justify-center shadow-lg shadow-brand-orange/20">
-                  <Trophy className="w-6 h-6 text-white" />
+                  <Users className="w-6 h-6 text-white" />
                 </div>
                 <div>
-                  <h2 className="text-2xl font-black text-brand-navy tracking-tight">Papan Peringkat Global</h2>
-                  <p className="text-xs font-bold text-brand-navy/40 uppercase tracking-widest">Pantau kemajuan seluruh siswa</p>
+                  <h2 className="text-2xl font-black text-brand-navy tracking-tight">Pantau Ruangan {viewingRoom.roomCode}</h2>
+                  <p className="text-xs font-bold text-brand-navy/40 uppercase tracking-widest">Live Leaderboard & Statistik</p>
                 </div>
               </div>
               <button 
-                onClick={() => setIsViewingLeaderboard(false)}
+                onClick={() => setViewingRoom(null)}
                 className="p-3 bg-white rounded-2xl text-brand-navy/20 hover:text-brand-orange transition-all shadow-sm"
               >
                 <X className="w-6 h-6" />
               </button>
             </div>
 
-            <div className="p-6 bg-white border-b border-brand-navy/5 flex flex-col md:flex-row gap-4">
-              <div className="flex-1 relative">
-                <Filter className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-brand-navy/20" />
-                <select 
-                  value={leaderboardFilter}
-                  onChange={(e) => setLeaderboardFilter(e.target.value)}
-                  className="w-full pl-12 pr-4 py-4 bg-brand-cream/50 border-2 border-transparent rounded-2xl focus:border-brand-orange focus:bg-white outline-none text-brand-navy font-bold transition-all appearance-none cursor-pointer"
-                >
-                  <option value="">Semua Kelas</option>
-                  {["7A", "7B", "7C", "7D", "7E", "7F", "7G", "7H", 
-                    "8A", "8B", "8C", "8D", "8E", "8F", "8G", "8H", 
-                    "9A", "9B", "9C", "9D", "9E", "9F", "9G", "9H"].map(cls => (
-                    <option key={cls} value={cls}>Kelas {cls}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-center px-6 py-4 bg-brand-orange/5 rounded-2xl border border-brand-orange/10">
-                <p className="text-xs font-black text-brand-orange uppercase tracking-widest">
-                  Total: {fullLeaderboard.length} Siswa
-                </p>
-              </div>
-            </div>
-
             <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-              {isFetchingLeaderboard ? (
-                <div className="flex flex-col items-center justify-center py-20">
-                  <div className="w-12 h-12 border-4 border-brand-orange border-t-transparent rounded-full animate-spin mb-4" />
-                  <p className="text-xs font-black text-brand-navy/40 uppercase tracking-widest animate-pulse">Memuat Data...</p>
-                </div>
-              ) : fullLeaderboard.length === 0 ? (
+              {roomLeaderboard.length === 0 ? (
                 <div className="text-center py-20">
-                  <Trophy className="w-16 h-16 text-brand-navy/10 mx-auto mb-4" />
-                  <p className="text-brand-navy/40 font-bold">Tidak ada data untuk filter ini.</p>
+                  <Users className="w-16 h-16 text-brand-navy/10 mx-auto mb-4" />
+                  <p className="text-brand-navy/40 font-bold">Belum ada siswa yang bergabung di ruangan ini.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {fullLeaderboard.map((student, index) => (
-                    <div key={student.id} className="flex items-center justify-between p-5 bg-brand-cream/20 rounded-[32px] border border-transparent hover:border-brand-orange/20 transition-all">
-                      <div className="flex items-center gap-4">
-                        <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black text-sm ${
-                          index === 0 ? "bg-yellow-400 text-white shadow-lg shadow-yellow-400/20" : 
-                          index === 1 ? "bg-slate-300 text-white shadow-lg shadow-slate-300/20" : 
-                          index === 2 ? "bg-amber-600 text-white shadow-lg shadow-amber-600/20" : 
-                          "bg-white text-brand-navy/40 shadow-sm"
-                        }`}>
-                          {index + 1}
+                  {roomLeaderboard.map((student, index) => {
+                    const correct = student.correctCount ?? student.correctAnswers ?? 0;
+                    const incorrect = student.incorrectCount ?? student.wrongAnswers ?? 0;
+
+                    return (
+                      <div key={student.id} className="flex items-center justify-between p-5 bg-brand-cream/20 rounded-[32px] border border-transparent hover:border-brand-orange/20 transition-all">
+                        <div className="flex items-center gap-4">
+                          <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black text-sm ${
+                            index === 0 ? "bg-yellow-400 text-white shadow-lg shadow-yellow-400/20" : 
+                            index === 1 ? "bg-slate-300 text-white shadow-lg shadow-slate-300/20" : 
+                            index === 2 ? "bg-amber-600 text-white shadow-lg shadow-amber-600/20" : 
+                            "bg-white text-brand-navy/40 shadow-sm"
+                          }`}>
+                            {index + 1}
+                          </div>
+                          <Avatar avatarString={student.avatar || student.siswaName} size="md" />
+                          <div>
+                            <p className="font-black text-brand-navy text-lg leading-tight">{student.siswaName || student.displayName || "Siswa"}</p>
+                            <div className="flex gap-3 mt-1">
+                              <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded-md">Benar: {correct}</span>
+                              <span className="text-[10px] font-bold text-red-500 uppercase tracking-widest bg-red-50 px-2 py-0.5 rounded-md">Salah: {incorrect}</span>
+                              {student.status && (
+                                <span className="text-[10px] font-bold text-brand-navy/40 uppercase tracking-widest bg-brand-navy/5 px-2 py-0.5 rounded-md">{student.status}</span>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                        <Avatar avatarString={student.avatar} size="md" />
-                        <div>
-                          <p className="font-black text-brand-navy text-lg leading-tight">{student.displayName}</p>
-                          <p className="text-[10px] font-bold text-brand-navy/40 uppercase tracking-widest">Kelas {student.studentClass || "-"}</p>
+                        <div className="text-right">
+                          <div className="flex items-center justify-end gap-2 mb-1">
+                            <p className="font-black text-brand-orange text-xl">{student.score || 0}</p>
+                            <span className="text-[10px] font-black text-brand-orange/40 uppercase">Skor</span>
+                          </div>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className="flex items-center justify-end gap-2 mb-1">
-                          <Sparkles className="w-4 h-4 text-brand-orange" />
-                          <p className="font-black text-brand-orange text-xl">{student.xp}</p>
-                          <span className="text-[10px] font-black text-brand-orange/40 uppercase">XP</span>
-                        </div>
-                        <p className="text-[10px] font-bold text-brand-navy/30 uppercase tracking-widest">Level {Math.floor((student.xp || 0) / 100) + 1}</p>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
